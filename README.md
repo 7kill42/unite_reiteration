@@ -1,3 +1,7 @@
+
+# unite_reiteration
+复现论文：DETERMINE-THEN-ENSEMBLE: NECESSITY OF TOP-K  UNION FOR LARGE LANGUAGE MODEL ENSEMBLING
+
 # UniTE (Determine-Then-Ensemble: Necessity of Top-k Union for Large Language Model Ensembling)
 
 Official code of the paper [Determine-Then-Ensemble: Necessity of Top-k Union for Large Language Model Ensembling](https://arxiv.org/abs/2410.03777)
@@ -34,4 +38,5 @@ For 3- model ensembling: run ```unite3.py```
       primaryClass={cs.CL},
       url={https://arxiv.org/abs/2410.03777}, 
 }
-```
+
+
