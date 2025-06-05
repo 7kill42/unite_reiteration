@@ -77,7 +77,10 @@ def arc_parse_pred_ans(filename):
                 continue
 
     # 打印总题数、正确题数和准确率
-    print('num_q %d correct %d ratio %.4f' % (total, correct, float(correct / total)))
+    if total > 0:
+        print(f'num_q {total} correct {correct} ratio {correct / total:.4f}')
+    else:
+        print('Error: No questions available for calculation')
     # 返回准确率
     return float(correct / total)
 

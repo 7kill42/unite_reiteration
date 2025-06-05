@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+
+import args as args
 from tqdm import tqdm
 import numpy as np
 import re
@@ -6,6 +10,7 @@ import time
 import json
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 from datasets import load_dataset
+
 
 import torch
 import argparse
@@ -18,6 +23,17 @@ from accelerate import Accelerator
 from torch.utils.data import DataLoader
 from accelerate.utils import gather_object
 import matplotlib.pyplot as plt
+NUMBER_PATTERNS = [
+    (r'\\boxed{(-?\d+[\.,]?\d*)}', 1),    # LaTeX格式
+    (r'####\s*(-?\d+[\.,]?\d*)', 1),      # #### 格式
+    (r'answer is (\d+)', 1),              # 自然语言描述
+    (r'[\$€£]?(-?\d+[\.,]?\d*)', 1)       # 货币符号
+]
+
+def clean_number_str(num_str):
+    """清洗数值字符串中的非数字字符"""
+    return num_str.replace(',', '').replace(' ', '').strip()
+
 
 
 def softmax(x):
@@ -93,7 +109,12 @@ def gsm_collate_fn(batch):
     # 遍历批次中的每个样本，提取问题和答案，并对问题进行格式化处理
     for b in batch:
         ques = b["question"]
-        prompt_q = prompt_complex + f'\n\nQuestion: {ques}\nLet\'s think step by step\n'
+        if not re.search(r"answer is (-?\d+)", b["answer"], re.I):
+            print(f"异常答案格式：{b['answer']}")
+        prompt_q = prompt_complex + prompt_complex + (
+            "\n请逐步思考，并通过\boxed{}给出最终数值答案\n\n"
+            f'Question: {ques}\nLet\'s think step by step\n'
+        )
         questions.append(prompt_q)
         answers.append(b["answer"])
 
@@ -285,29 +306,35 @@ def vocab_softmax(v1):
     对输入的词汇概率分布进行 softmax 归一化处理。
 
     参数:
-        v1 (list): 一个列表，其中每个元素是一个字典。字典的键是词汇（token），
-                   值是一个包含两个元素的列表，第一个元素是一个数值（用于 softmax 计算），
-                   第二个元素是与该词汇相关的标识符（ids）。
+        v1 (list): 输入概率分布列表，每个元素为字典类型。字典键为词汇（token），
+                   值为包含两个元素的列表：第一个元素为原始概率值（用于计算softmax），
+                   第二个元素为词汇对应的标识符（ids）
 
     返回值:
-        list: 一个新的列表，结构与输入相同，但每个词汇的概率值已经过 softmax 归一化处理。
-              每个字典的值仍然是一个包含两个元素的列表，第一个元素是归一化后的概率值，
-              第二个元素保持不变。
+        list: 处理后的新列表，结构与输入保持一致。每个字典的值列表中，
+             第一个元素替换为softmax归一化后的概率值，第二个元素保持原始标识符不变
     """
     v1_new = []
     for element in v1:
-        # 初始化一个新的字典，用于存储当前元素的处理结果
+        # 初始化新元素容器，保持原始结构
         ele = {}
         ele_values = list(element.values())
         ele_values0, ele_values1 = [], []
 
-        # 分离每个词汇的概率值和标识符
+        # 分离原始概率值和标识符到两个独立列表
         for item in ele_values:
-            ele_values0.append(item[0])  # 提取概率值
-            ele_values1.append(item[1])  # 提取标识符
+            ele_values0.append(item[0])  # 提取原始概率值
+            ele_values1.append(item[1])  # 提取固定标识符
 
-        # 对概率值进行 softmax 归一化处理
+        # 使用PyTorch进行softmax计算（自动处理维度）
         ele_values0 = torch.softmax(torch.tensor(ele_values0), dim=0)
+
+        # 重组数据结构：将归一化概率与原始标识符重新配对
+        for token, prob, ids in zip(element.keys(), ele_values0, ele_values1):
+            ele[token] = [prob, ids]
+        v1_new.append(ele)
+
+    return v1_new
 
 
 
@@ -364,6 +391,8 @@ def average_and_sample(v1, v2, lamda, tokenizer):
         next_token_id1 (list): 从v1中采样得到的token ID列表。
         next_token_id2 (list): 从v2中采样得到的token ID列表。
     """
+    if v1 is None or v2 is None:
+        raise ValueError("v1/v2 cannot be None (check vocab_softmax implementation)")
     # 初始化返回值列表
     next_token, v_avg, next_token_id1, next_token_id2 = [], [], [], []
 
@@ -552,25 +581,40 @@ def ensemble_decoding(test):
         ans_num = []
         for gold_ans in answers:
             if 'gsm' in test:
-                ans_num.append(float(re.search(r"#### (-?\d+)", gold_ans).group(1)))
-            else:
-                ans_num.append(gold_ans)
+                # ans_num.append(float(re.search(r"#### (-?\d+)", gold_ans).group(1)))
+                original_ans = gold_ans  # 保留原始文本
+                match = re.search(r"answer is (-?\d+)", gold_ans, re.IGNORECASE)
+                if match:
+                    try:
+                        clean_num = float(clean_number_str(match.group(1)))
+                        ans_num.append(clean_num)
+                    except Exception as e:
+                        print(
+                            f"数值转换失败 | 原始文本: {original_ans[:50]}... | 匹配值: {match.group(1)} | 错误: {str(e)}")
+                        ans_num.append(float('nan'))
+                else:
+                    print(f"格式不匹配 | 原始文本: {original_ans[:50]}...")  # 记录完整错误信息
+                    ans_num.append(float('nan'))
         label_list.extend(ans_num)
         ori_ans_list.extend(answers)
 
         pred_num = []
         ans_list = []
         for gold_ans in output_ans:
-            print(gold_ans)
-            if 'Question' in gold_ans:
-                gold_ans = gold_ans.split('Question:')[0].strip()
-            if 'Explanation' in gold_ans:
-                gold_ans = gold_ans.split('Explanation')[0].strip()
-            ans_list.append(gold_ans)
-            if 'gsm' in test.lower():
-                pred_num.append(gsm_extract_math_answer(gold_ans))
-            else:
-                pred_num.append(gold_ans)
+            try:
+                # 新增答案清洗函数
+                gold_ans = re.sub(r'(Question|Explanation):.*', '', gold_ans, flags=re.IGNORECASE)
+                gold_ans = re.sub(r'[^\d\.,\-eE/]', '', gold_ans).strip()  # 保留科学计数法和分数符号
+
+                if 'gsm' in test.lower():
+                    # 增强数值提取的健壮性
+                    pred_value = gsm_extract_math_answer(gold_ans)
+                else:
+                    pred_value = gold_ans
+            except Exception as e:
+                print(f"ERROR processing answer: {gold_ans[:50]}... ({str(e)})")
+                pred_value = float('nan')
+            pred_num.append(pred_value)
             print('==========output========\n', ans_num[-1], "=======", pred_num[-1])
         pred_list.extend(pred_num)
         solution_list.extend(ans_list)
@@ -616,22 +660,46 @@ if __name__ == "__main__":
 
     # 初始化参数解析器，定义命令行参数
     arg_parse = argparse.ArgumentParser()
-    arg_parse.add_argument("--test_set", type=str, default="/home/lonelydoll/project/unite/datasets/GSM/test.cleand.jsonl")
-    arg_parse.add_argument("--prompts", type=str, default="/home/lonelydoll/project/unite/datasets/GSM/gsm_prompt.txt")
-    arg_parse.add_argument("--model_path1", type=str, default="/home/lonelydoll/models/shakechen/Llama-2-7b-chat-hf")
-    arg_parse.add_argument("--model_path2", type=str, default="/home/lonelydoll/models/deepseek-ai/deepseek-llm-7b-chat")
-    arg_parse.add_argument("--output_file", type=str, default="/home/lonelydoll/project/unite/output_file_llama7b_deepseek7b.jsonl")
+    arg_parse.add_argument("--test_set", type=str, default="/home/wujie/project/unite/datasets/GSM/test.cleand.jsonl")
+    arg_parse.add_argument("--prompts", type=str, default="/home/wujie/project/unite/datasets/GSM/gsm_prompt.txt")
+    arg_parse.add_argument("--model_path1", type=str, default="/home/wujie/models/shakechen/Llama-2-7b-chat-hf")
+    arg_parse.add_argument("--model_path2", type=str, default="/home/wujie/models/deepseek-ai/deepseek-llm-7b-chat")
+    arg_parse.add_argument("--output_dir", type=str, default="/home/wujie/project/unite/output")
     arg_parse.add_argument("--per_device_batch_size", type=int, default=1)
     arg_parse.add_argument("--max_new_tokens", type=int, default=10)  # 不同数据集的最大 token 数可能不同
+    args = arg_parse.parse_args()
+    model1_name = Path(args.model_path1).name.rstrip('-hf')  # 去除常见后缀
+    model2_name = Path(args.model_path2).name.rstrip('-hf')
+    dataset_name = Path(args.test_set).parent.name  # 获取数据集目录名
 
+    # 构建完整输出路径
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    args.output_file = str(output_dir / f"{model1_name}_{model2_name}_{dataset_name}.jsonl")
+
+    # 将最终路径添加回参数解析器（可选）
+    arg_parse.add_argument("--output_file", type=str, default=args.output_file)
+
+    # 重新解析包含output_file的完整参数
     args = arg_parse.parse_args()
 
+    model1_name = Path(args.model_path1).name.rstrip('-hf')  # 去除常见后缀
+    model2_name = Path(args.model_path2).name.rstrip('-hf')
+    dataset_name = Path(args.test_set).parent.name  # 获取数据集目录名
+
+    output_filename = f"{model1_name}_{model2_name}_{dataset_name}.jsonl"
+
+    # 确保输出目录存在
+    Path(args.output_file).mkdir(parents=True, exist_ok=True)
+
+    # 构建完整输出路径
+    args.output_file = str(Path(args.output_file) / output_filename)
     # 初始化加速器，用于分布式计算
     accelerator = Accelerator()
 
     # 加载设备信息和提示模板
-    device1 = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device2 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device1 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device2 = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
     prompt_complex = open(args.prompts, "r", encoding="utf-8").read()
 
@@ -664,6 +732,7 @@ if __name__ == "__main__":
         output_hidden_states=True,
         output_scores=True,
         output_logits=True,
+        output_attentions=False,
         return_dict_in_generate=True,
         use_cache=True,
     )
@@ -676,6 +745,7 @@ if __name__ == "__main__":
         output_hidden_states=True,
         output_scores=True,
         output_logits=True,
+        output_attentions=False,
         return_dict_in_generate=True,
         use_cache=True,
     )

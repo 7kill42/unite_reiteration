@@ -1,25 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="lonelydoll@172.24.128.111:30011 password (2)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="wujie@172.24.52.209:22 password" confirmBeforeUploading="false">
+    <option name="confirmBeforeUploading" value="false" />
     <serverData>
-      <paths name="lonelydoll@172.24.128.111:30011 password">
+      <paths name="202421633183">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/lonelydoll/project/unite" local="$PROJECT_DIR$" />
+            <mapping deploy="/lonelydoll/project/unite_test" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
-      <paths name="lonelydoll@172.24.128.111:30011 password (2)">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/lonelydoll/project/unite" local="$PROJECT_DIR$" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="lonelydoll@172.24.128.111:30878 password">
+      <paths name="root@172.24.128.111:30170 password">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="root@172.24.128.111:30315 password">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wujie@172.24.52.209:22 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wujie/project/unite_test" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
