@@ -62,3 +62,25 @@ def arc_collate_fn(batch):
 
     return questions, answers
 
+
+def qa_collate_fn(batch):
+    """TriviaQA/NQ collate function"""
+    questions, answers = [], []
+    for b in batch:
+        ques = b["question"]
+        prompt_q = f'\n\nQuestion: {ques}\nAnswer:'
+        questions.append(prompt_q)
+        answers.append(b["answer"])
+    return questions, answers
+
+
+def gsm_collate_fn(batch):
+    """GSM8K collate function"""
+    questions, answers = [], []
+    for b in batch:
+        ques = b["question"]
+        prompt_q = f'\n\nQuestion: {ques}\nLet\'s think step by step\n'
+        questions.append(prompt_q)
+        answers.append(b["answer"])
+    return questions, answers
+
